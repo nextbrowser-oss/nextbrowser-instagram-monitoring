@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="989" height="454" viewBox="0 0 989 454" role="img" aria-label="Example instagram-monitor output: mentions, comments and competitor posts ranked by urgency, and a follower change">
+  <rect x="0.5" y="0.5" width="988" height="453" rx="12" fill="#0b1120" stroke="#1f2937"/>
+  <path d="M12.5 0.5h964a12 12 0 0 1 12 12v28h-988v-28a12 12 0 0 1 12-12z" fill="#111827"/>
+  <circle cx="24" cy="20" r="6" fill="#ff5f57"/>
+  <circle cx="44" cy="20" r="6" fill="#febc2e"/>
+  <circle cx="64" cy="20" r="6" fill="#28c840"/>
+  <text x="494.5" y="25" text-anchor="middle" fill="#6b7280" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13">instagram-monitor — sample output</text>
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" fill="#e5e7eb">
+    <text x="28" y="72"><tspan fill="#2dd4bf">$</tspan> instagram-monitor run --profile acme --keywords acme --profiles rival_store</text>
+    <text x="28" y="98" xml:space="preserve"><tspan fill="#6b7280">09:00</tspan>  <tspan fill="#60a5fa">signed in</tspan> as <tspan fill="#c4b5fd">@acme_shop</tspan></text>
+    <text x="28" y="124" xml:space="preserve"><tspan fill="#6b7280">09:00</tspan>  <tspan fill="#94a3b8">pass</tspan> <tspan fill="#c4b5fd">@acme_shop</tspan>: starting line: 5 sources, 7 matches; followers: 2 read, 0 changed</text>
+    <text x="28" y="150" xml:space="preserve"><tspan fill="#6b7280">09:15</tspan>  <tspan fill="#f87171">HIGH</tspan>    <tspan fill="#c4b5fd">@mila.makes</tspan> mentioned you: <tspan fill="#c4b5fd">@acme_shop</tspan> my order never arrived, can you check?</text>
+    <text x="28" y="176" xml:space="preserve"><tspan fill="#6b7280">     </tspan>   <tspan fill="#a7f3d0">[Mentions you · Says "never arrived" · Asks a question]</tspan>  <tspan fill="#64748b">https://www.instagram.com/p/C0dEx1/c/18031/</tspan></text>
+    <text x="28" y="202" xml:space="preserve"><tspan fill="#6b7280">09:15</tspan>  <tspan fill="#f87171">HIGH</tspan>    <tspan fill="#c4b5fd">@tom_k</tspan> commented on your post: Does the large one ship to Canada?</text>
+    <text x="28" y="228" xml:space="preserve"><tspan fill="#6b7280">     </tspan>   <tspan fill="#a7f3d0">[Comments on your post · Asks a question · No reply yet]</tspan>  <tspan fill="#64748b">https://www.instagram.com/p/C0dEx1/c/18032/</tspan></text>
+    <text x="28" y="254" xml:space="preserve"><tspan fill="#6b7280">09:15</tspan>  <tspan fill="#94a3b8">low</tspan>     <tspan fill="#c4b5fd">@shopper22</tspan> commented on <tspan fill="#c4b5fd">@rival_store</tspan>'s post: acme does the same thing cheaper, anyone tried?</text>
+    <text x="28" y="280" xml:space="preserve"><tspan fill="#6b7280">     </tspan>   <tspan fill="#a7f3d0">[Asks a question]</tspan>  <tspan fill="#64748b">https://www.instagram.com/p/C0dEx1/c/18033/</tspan></text>
+    <text x="28" y="306" xml:space="preserve"><tspan fill="#6b7280">09:15</tspan>  <tspan fill="#94a3b8">low</tspan>     <tspan fill="#c4b5fd">@rival_store</tspan> posted: Summer sale starts today: 30% off everything</text>
+    <text x="28" y="332" xml:space="preserve"><tspan fill="#6b7280">     </tspan>   <tspan fill="#64748b">https://www.instagram.com/p/C1aB2c/</tspan></text>
+    <text x="28" y="358" xml:space="preserve"><tspan fill="#6b7280">09:15</tspan>  <tspan fill="#94a3b8">pass</tspan> <tspan fill="#c4b5fd">@acme_shop</tspan>: 5 sources: 4 new (2 urgent) of 11 matches; 2 threads read; followers: 2 read, 0 changed</text>
+    <text x="28" y="384" xml:space="preserve"><tspan fill="#6b7280">09:30</tspan>  <tspan fill="#60a5fa">followers</tspan> <tspan fill="#c4b5fd">@acme_shop</tspan> (you): 12,480 → 12,517 <tspan fill="#34d399">(+37)</tspan></text>
+    <text x="28" y="410" xml:space="preserve"><tspan fill="#6b7280">09:30</tspan>  <tspan fill="#94a3b8">pass</tspan> <tspan fill="#c4b5fd">@acme_shop</tspan>: 5 sources: 0 new of 11 matches; followers: 2 read, 1 changed</text>
+  </g>
+</svg>

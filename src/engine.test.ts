@@ -1,0 +1,299 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { checkAccount, runPass, type PassDeps, type PassResult } from "./engine.js";
+import type { MonitorEvent, NewItemEvent } from "./events.js";
+import { LANDING_URL, SIGN_IN_URL, type RawPost } from "./scripts.js";
+import { emptyState, withSettings, type MonitorSettings, type MonitorState } from "./state.js";
+import { FakeInstagram, NOON, comment, post, story } from "./testing/fakeBrowser.js";
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+
+let clock = NOON + 60 * MINUTE;
+let ig: FakeInstagram;
+let mine: RawPost;
+let theirs: RawPost;
+
+beforeEach(() => {
+  clock = NOON + 60 * MINUTE;
+  ig = new FakeInstagram();
+  mine = post("acme_shop", 10, "New drop is live", { comments: 2 });
+  theirs = post("rival_store", 20, "Our summer sale", { comments: 4 });
+  ig.profiles.acme_shop = { followers: 500, posts: [mine] };
+  ig.profiles.rival_store = { followers: 9000, posts: [theirs] };
+});
+
+function pass(state: MonitorState, extra: Partial<PassDeps> = {}): Promise<PassResult> {
+  return runPass({
+    browser: ig,
+    state,
+    now: () => clock,
+    sleep: async (ms) => {
+      clock += ms;
+    },
+    random: () => 0.5,
+    ...extra,
+  });
+}
+
+function watching(patch: Partial<MonitorSettings> = {}): MonitorState {
+  return emptyState({ profiles: ["rival_store"], keywords: ["acme"], ...patch });
+}
+
+const types = (events: MonitorEvent[]) => events.map((event) => event.type);
+const fresh = (events: MonitorEvent[]) => events.filter((event): event is NewItemEvent => event.type === "new_item");
+const texts = (events: MonitorEvent[]) => fresh(events).map((event) => event.item.text);
+
+/** later moves the clock to the next pass and returns a minute offset from
+ *  NOON that lies between the two passes. */
+function later(minutes = 15): number {
+  const between = (clock - NOON) / MINUTE + 1;
+  clock += minutes * MINUTE;
+  return between;
+}
+
+/** grow adds comments under a post and raises its count, as Instagram shows. */
+function grow(target: RawPost, ...added: ReturnType<typeof comment>[]): void {
+  ig.comments[target.pk] = [...added, ...(ig.comments[target.pk] ?? [])];
+  target.comments = (target.comments ?? 0) + added.length;
+}
+
+describe("the first pass", () => {
+  it("signs in, records every source as its starting line, and reads no comment thread", async () => {
+    ig.stories = [story("fan", 30, "fan mentioned you in a comment: @acme_shop love it", { comment_id: "1800000000000000001", media_id: theirs.pk })];
+    const { state, events, summary, matches } = await pass(watching());
+
+    expect(types(events)).toEqual(["signed_in"]);
+    expect(summary).toMatchObject({ signedIn: true, handle: "acme_shop", newItems: 0, commentReads: 0 });
+    expect(summary.baselines).toBe(summary.sourcesRead);
+    expect(Object.keys(state.sources).sort()).toEqual(["activity", "comments:own", "profile:rival_store:comments", "profile:rival_store:posts", "tags"]);
+    // The posts are watched from here on, at the counts they have now.
+    expect(state.posts[mine.pk]).toMatchObject({ owner: "acme_shop", comments: 2 });
+    expect(state.posts[theirs.pk]).toMatchObject({ owner: "rival_store", comments: 4 });
+    expect(state.followers).toMatchObject({ acme_shop: { followers: 500 }, rival_store: { followers: 9000 } });
+    // The dashboard still gets what was found.
+    expect(matches.map((match) => match.item.text)).toEqual(["@acme_shop love it", "Our summer sale"]);
+    expect(ig.opened).toEqual([LANDING_URL, "about:blank"]);
+  });
+
+  it("never mutates the state it was given", async () => {
+    const given = watching();
+    const copy = structuredClone(given);
+    await pass(Object.freeze(given));
+    expect(given).toEqual(copy);
+  });
+});
+
+describe("comments on the account's posts", () => {
+  it("reads a thread only when its count grew, and announces what is new", async () => {
+    const first = await pass(watching());
+    const minute = later();
+    grow(mine, comment("buyer", minute, "Does it ship to Canada?"), comment("acme_shop", minute + 1, "thanks all!"));
+    const { events, summary } = await pass(first.state);
+
+    expect(ig.threadsRead).toEqual([mine.pk]);
+    expect(summary.commentReads).toBe(1);
+    const [question] = fresh(events);
+    expect(fresh(events)).toHaveLength(1);
+    expect(question).toMatchObject({
+      source: { kind: "own_comments" },
+      item: { author: "buyer", kind: "comment", addressed: "comment_on_post", post: { id: mine.pk, url: `https://www.instagram.com/p/${mine.shortcode}/` } },
+      triage: { urgency: "high", reasons: ["Comments on your post", "Asks a question", "No reply yet"] },
+    });
+    expect(question!.item.url).toBe(`https://www.instagram.com/p/${mine.shortcode}/c/${question!.item.id}/`);
+  });
+
+  it("reads the comments of a post published after monitoring started", async () => {
+    const first = await pass(watching());
+    const minute = later();
+    const fresh_ = post("acme_shop", minute, "Restock!", { comments: 0 });
+    ig.profiles.acme_shop!.posts = [fresh_, mine];
+    grow(fresh_, comment("buyer", minute + 2, "finally"));
+    const { events } = await pass(first.state);
+    expect(texts(events)).toEqual(["finally"]);
+  });
+
+  it("reads no more threads than allowed, and catches up on the next pass", async () => {
+    const second = post("acme_shop", 5, "Older drop", { comments: 1 });
+    ig.profiles.acme_shop!.posts = [mine, second];
+    const first = await pass(watching({ maxCommentReads: 1, profiles: [] }));
+    let minute = later();
+    grow(mine, comment("a", minute, "one"));
+    grow(second, comment("b", minute, "two"));
+    const middle = await pass(first.state);
+    expect(texts(middle.events)).toEqual(["one"]);
+    expect(middle.summary).toMatchObject({ commentReads: 1, commentReadsDeferred: 1 });
+    expect(middle.summary.notes).toContain("1 post with new comments waits for the next pass (maxCommentReads).");
+    minute = later();
+    const last = await pass(middle.state);
+    expect(texts(last.events)).toEqual(["two"]);
+  });
+});
+
+describe("the activity feed", () => {
+  it("announces a mention as high, and the same comment found under a post only once", async () => {
+    const first = await pass(watching());
+    const minute = later();
+    const mention = comment("fan", minute, "@acme_shop is this legit?");
+    ig.stories = [story("fan", minute, "fan mentioned you in a comment: @acme_shop is this legit?", { comment_id: mention.pk, media_id: mine.pk })];
+    grow(mine, mention);
+    const { events } = await pass(first.state);
+
+    expect(fresh(events)).toHaveLength(1);
+    expect(fresh(events)[0]).toMatchObject({
+      source: { kind: "activity" },
+      item: { key: `comment:${mention.pk}`, addressed: "mention", text: "@acme_shop is this legit?" },
+      triage: { urgency: "high", reasons: ["Mentions you", "Asks a question"] },
+    });
+  });
+
+  it("leaves out likes and follows: there is nothing to answer in them", async () => {
+    const first = await pass(watching());
+    const minute = later();
+    ig.stories = [story("fan", minute, "fan liked your post."), story("fan2", minute, "fan2 started following you.")];
+    const { events } = await pass(first.state);
+    expect(fresh(events)).toHaveLength(0);
+  });
+
+  it("calls a comment under someone else's post a reply", async () => {
+    const first = await pass(watching());
+    const minute = later();
+    ig.stories = [story("fan", minute, "fan replied to your comment: agreed", { comment_id: "1800000000000000777", media_id: "3254998171211400001" })];
+    const { events } = await pass(first.state);
+    expect(fresh(events)[0]!.item).toMatchObject({ addressed: "reply", text: "agreed" });
+  });
+});
+
+describe("tags", () => {
+  it("announces a post the account is tagged in as high", async () => {
+    const first = await pass(watching());
+    const minute = later();
+    ig.tagged = [post("blogger", minute, "Unboxing my new kit")];
+    const { events } = await pass(first.state);
+    expect(fresh(events)[0]).toMatchObject({ source: { kind: "tags" }, item: { addressed: "tag", author: "blogger" }, triage: { urgency: "high" } });
+  });
+});
+
+describe("watched profiles", () => {
+  it("announces a watched profile's new post, and the comments under it that name a keyword", async () => {
+    const first = await pass(watching({ excludeKeywords: ["giveaway"] }));
+    const minute = later();
+    const launch = post("rival_store", minute, "Big launch today", { comments: 0 });
+    ig.profiles.rival_store!.posts = [launch, theirs];
+    grow(theirs,
+      comment("shopper", minute, "acme does this cheaper, anyone tried?"),
+      comment("shopper2", minute, "love it"),
+      comment("bot", minute, "acme giveaway click here"));
+    const { events } = await pass(first.state);
+
+    expect(texts(events).sort()).toEqual(["Big launch today", "acme does this cheaper, anyone tried?"]);
+    const competitor = fresh(events).find((event) => event.source.kind === "profile_comments")!;
+    expect(competitor).toMatchObject({ source: { name: "@rival_store" }, keywords: ["acme"], triage: { urgency: "low", reasons: ["Asks a question"] } });
+  });
+
+  it("reads no comments under a watched profile's posts without keywords", async () => {
+    const first = await pass(watching({ keywords: [] }));
+    later();
+    grow(theirs, comment("x", 0, "acme"));
+    await pass(first.state);
+    expect(ig.threadsRead).toEqual([]);
+  });
+
+  it("says when a profile is private or does not exist", async () => {
+    ig.profiles.locked = { followers: 1, posts: [post("locked", 1, "hidden")], private: true };
+    const { summary } = await pass(watching({ profiles: ["locked", "nobody_here"] }));
+    expect(summary.notes).toEqual(expect.arrayContaining([
+      "@locked is private: follow it from this account to see its posts.",
+      "@nobody_here was not found: check the spelling.",
+    ]));
+  });
+
+  it("reports a follower count that moved", async () => {
+    const first = await pass(watching());
+    ig.profiles.rival_store!.followers = 9100;
+    later();
+    const { events } = await pass(first.state);
+    expect(events).toContainEqual(expect.objectContaining({ type: "followers_changed", handle: "rival_store", own: false, previous: 9000, current: 9100, delta: 100 }));
+  });
+});
+
+describe("degraded states", () => {
+  it("stops at a signed-out profile, says so once, and picks up after a sign-in", async () => {
+    const first = await pass(watching());
+    ig.signedIn = false;
+    later();
+    const out = await pass(first.state);
+    expect(types(out.events)).toEqual(["signed_out"]);
+    expect(out.summary).toMatchObject({ signedIn: false, loginRequired: true, requests: 1 });
+    expect(out.state.sources).toEqual(first.state.sources);
+    later();
+    const still = await pass(out.state);
+    expect(types(still.events)).toEqual([]);
+    ig.signedIn = true;
+    later();
+    const back = await pass(still.state);
+    expect(types(back.events)).toEqual(["signed_in"]);
+  });
+
+  it("stops at a security check and asks for it to be done by hand", async () => {
+    const first = await pass(watching());
+    ig.checkpoint = true;
+    later();
+    const { events, summary } = await pass(first.state);
+    expect(types(events)).toEqual(["security_check"]);
+    expect(summary).toMatchObject({ securityCheck: true, requests: 1 });
+    expect(summary.blocked).toContain("security check");
+    expect(ig.opened.at(-1)).toBe("about:blank");
+  });
+
+  it("stops when Instagram limits the account, keeping what was read before", async () => {
+    const first = await pass(watching());
+    const minute = later();
+    ig.stories = [story("fan", minute, "fan mentioned you: @acme_shop hi", { comment_id: "1800000000000000999" })];
+    ig.throttle = "profile @rival_store";
+    const { events, summary, state } = await pass(first.state);
+    expect(summary.rateLimited).toBe(true);
+    expect(summary.blocked).toContain("feedback_required");
+    expect(fresh(events)).toHaveLength(1);
+    expect(state.sources["profile:rival_store:posts"]).toEqual(first.state.sources["profile:rival_store:posts"]);
+  });
+
+  it("starts activity over when another account signs in", async () => {
+    const first = await pass(watching());
+    ig.handle = "other_brand";
+    ig.profiles.other_brand = { followers: 3, posts: [] };
+    const minute = later();
+    ig.stories = [story("fan", minute, "fan mentioned you: @other_brand hey", { comment_id: "1800000000000000555" })];
+    const { events } = await pass(first.state);
+    expect(types(events)).toEqual(["account_changed"]);
+  });
+});
+
+describe("settings", () => {
+  it("forgets a profile that was removed, so adding it back starts over", async () => {
+    const first = await pass(watching());
+    later();
+    const without = await pass(withSettings(first.state, { profiles: [] }));
+    expect(Object.keys(without.state.sources)).not.toContain("profile:rival_store:posts");
+    expect(without.state.followers.rival_store).toBeUndefined();
+  });
+
+  it("does not announce what is older than the age window after a long absence", async () => {
+    const first = await pass(watching({ maxItemAgeMs: 6 * HOUR }));
+    const minute = later(20 * 60);
+    grow(mine, comment("early", minute + 60, "old news?"), comment("late", minute + 19 * 60, "fresh?"));
+    const { events } = await pass(first.state);
+    expect(texts(events)).toEqual(["fresh?"]);
+  });
+});
+
+describe("checkAccount", () => {
+  it("opens instagram.com, says who is signed in, and leaves the page open", async () => {
+    expect(await checkAccount({ browser: ig })).toEqual({ signedIn: true, handle: "acme_shop" });
+    expect(ig.opened).toEqual([SIGN_IN_URL]);
+    ig.signedIn = false;
+    expect(await checkAccount({ browser: ig })).toEqual({ signedIn: false });
+    ig.signedIn = true;
+    ig.checkpoint = true;
+    expect(await checkAccount({ browser: ig })).toEqual({ signedIn: false, securityCheck: true });
+  });
+});

@@ -1,0 +1,79 @@
+name: Bug report
+description: Report a reproducible problem with Instagram monitoring.
+title: "[Bug]: "
+labels: ["needs triage"]
+assignees: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Instagram monitoring. Please give enough detail for someone else to reproduce the problem.
+
+        Do not include API keys, cookies, session data, or private messages. Report security vulnerabilities through [private security reporting](https://github.com/nextbrowser-oss/nextbrowser-instagram-monitoring/security/advisories/new).
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Mentions, tags and replies (activity)
+        - Comments on the account's posts
+        - Watched profiles and competitor content
+        - Keyword matching or urgency triage
+        - Follower counts
+        - Sign-in, security check or rate limit
+        - CLI (instagram-monitor)
+        - Integration in Nextbrowser
+        - Documentation
+        - Other or not sure
+    validations:
+      required: false
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Problem summary
+      description: What happened, and what did you expect instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Run instagram-monitor once --profile ... --verbose
+        2. ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "For example: v0.1.0 or abc1234"
+    validations:
+      required: true
+
+  - type: input
+    id: response
+    attributes:
+      label: What instagram.com answered
+      description: The status and content type of the failing request from the --verbose log, for example "403 text/html".
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: Paste the relevant --verbose lines, with usernames and message text removed if they are private.
+      render: shell
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Submission checklist
+      options:
+        - label: I searched existing issues and did not find an open duplicate.
+        - label: I removed credentials, cookies, and private content.

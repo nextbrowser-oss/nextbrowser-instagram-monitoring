@@ -1,0 +1,62 @@
+{
+  "name": "@nextbrowser-oss/instagram-monitoring",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The open-source Instagram monitoring engine for Nextbrowser: comments on your posts, mentions and tags, and new content from watched and competitor profiles, ranked by urgency, read from a signed-in browser profile.",
+  "keywords": [
+    "nextbrowser",
+    "instagram",
+    "monitoring",
+    "social-listening",
+    "comments",
+    "mentions",
+    "competitors",
+    "browser-automation",
+    "nbc"
+  ],
+  "homepage": "https://github.com/nextbrowser-oss/nextbrowser-instagram-monitoring#readme",
+  "bugs": {
+    "url": "https://github.com/nextbrowser-oss/nextbrowser-instagram-monitoring/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nextbrowser-oss/nextbrowser-instagram-monitoring.git"
+  },
+  "author": "Nextbrowser contributors",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "import": "./dist/node/index.js"
+    }
+  },
+  "bin": {
+    "instagram-monitor": "dist/node/bin.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "render:terminal": "node scripts/render-terminal.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "happy-dom": "^20.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.1.9"
+  }
+}
