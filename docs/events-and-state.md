@@ -79,6 +79,7 @@ Something new that needs a look: a mention, a tag, a reply, a comment on the acc
 | `commentReads`, `commentReadsDeferred` | Threads read, and threads that grew but wait for the next pass. |
 | `followerChecks`, `followerChanges` | Follower counts read, and those that changed. |
 | `stopped` | `shouldStop` ended the pass early. |
+| `failed` | The pass ended on an error nothing else explains — a browser that died, a script that threw. The note says what. |
 | `notes` | Up to five sentences a person can read. |
 
 ## The state document

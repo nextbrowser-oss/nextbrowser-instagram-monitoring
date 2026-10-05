@@ -129,6 +129,26 @@ describe("comments on the account's posts", () => {
   });
 });
 
+describe("a pass that stops halfway through the threads", () => {
+  it("keeps the threads it read due, so their comments are announced next time", async () => {
+    const second = post("acme_shop", 5, "Older drop", { comments: 1 });
+    ig.profiles.acme_shop!.posts = [mine, second];
+    const first = await pass(watching({ profiles: [] }));
+    const minute = later();
+    grow(mine, comment("a", minute, "one"));
+    grow(second, comment("b", minute, "two"));
+    ig.throttle = `comments ${second.pk}`;
+    const stopped = await pass(first.state);
+    expect(stopped.summary.rateLimited).toBe(true);
+    expect(fresh(stopped.events)).toHaveLength(0);
+    expect(stopped.state.posts[mine.pk]!.comments).toBe(2);
+    ig.throttle = "";
+    later();
+    const next = await pass(stopped.state);
+    expect(texts(next.events).sort()).toEqual(["one", "two"]);
+  });
+});
+
 describe("the activity feed", () => {
   it("announces a mention as high, and the same comment found under a post only once", async () => {
     const first = await pass(watching());

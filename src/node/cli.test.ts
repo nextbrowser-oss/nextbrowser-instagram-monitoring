@@ -64,7 +64,7 @@ describe("describePass", () => {
   const summary: PassSummary = {
     signedIn: true, handle: "acme_shop", loginRequired: false, securityCheck: false, rateLimited: false, requests: 8, sourcesRead: 5,
     baselines: 0, itemsRead: 40, matches: 6, newItems: 2, urgent: 1, commentReads: 2, commentReadsDeferred: 0, followerChecks: 2,
-    followerChanges: 1, stopped: false, notes: [],
+    followerChanges: 1, stopped: false, failed: false, notes: [],
   };
 
   it("sums a pass up in one line", () => {

@@ -20,7 +20,7 @@ const found = (time, source, value, urgency, reasons, keywords = []) => ({
 const pass = (patch) => ({
   signedIn: true, handle: "acme_shop", loginRequired: false, securityCheck: false, rateLimited: false, requests: 0, sourcesRead: 5,
   baselines: 0, itemsRead: 0, matches: 0, newItems: 0, urgent: 0, commentReads: 0, commentReadsDeferred: 0, followerChecks: 2,
-  followerChanges: 0, stopped: false, notes: [], ...patch,
+  followerChanges: 0, stopped: false, failed: false, notes: [], ...patch,
 });
 
 const lines = [

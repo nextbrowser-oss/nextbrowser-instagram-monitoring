@@ -68,6 +68,7 @@ Reading a thread is the expensive read, so the pass remembers each post's commen
 - A post seen for the first time is only recorded. Its existing comments are part of the starting line.
 - A post published after the source started is read as soon as it has comments: all of them are new.
 - A pass reads at most `maxCommentReads` threads (10). A post past that keeps its old count, so the next pass sees the growth and reads it — nothing is skipped, only delayed — and the summary says how many wait.
+- A thread's count is raised only after what it held was announced. A pass that stops at the next thread — a rate limit, a security check, Stop — leaves it due, and the next pass reads it again.
 - A thread is read one page deep, newest comments first.
 
 ## Keywords

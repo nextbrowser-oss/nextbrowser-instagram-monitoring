@@ -109,6 +109,9 @@ export interface PassSummary {
   followerChecks: number;
   followerChanges: number;
   stopped: boolean;
+  /** The pass ended on an error nothing above explains — a browser that died,
+   *  a script that threw. The note says what it was. */
+  failed: boolean;
   notes: string[];
 }
 
@@ -211,6 +214,7 @@ class Pass {
     followerChecks: 0,
     followerChanges: 0,
     stopped: false,
+    failed: false,
     notes: [],
   };
 
@@ -261,6 +265,7 @@ class Pass {
         this.summary.blocked = error.message;
         this.note(error.message);
       } else {
+        this.summary.failed = true;
         this.note(`The pass failed: ${errorText(error)}`);
         this.log("pass_error", { error: errorText(error) });
       }
@@ -387,8 +392,9 @@ class Pass {
     this.step("Reading comments on your posts");
     const key = "comments:own";
     this.planned.add(key);
-    const items = await this.readThreads(key, newest(posts, this.state.settings.ownPosts), "comment_on_post");
+    const { items, commit } = await this.readThreads(key, newest(posts, this.state.settings.ownPosts), "comment_on_post");
     this.consider({ key, source: { kind: "own_comments", name: "your posts" }, filter: "", filtered: false, items });
+    commit();
   }
 
   /** readProfile reads one watched profile: its new posts, its follower count,
@@ -418,18 +424,24 @@ class Pass {
     this.consider({ key: postsKey, source: { kind: "profile_posts", name: `@${handle}` }, filter: "all", filtered: false, items });
     if (settings.keywords.length > 0 && settings.watchProfileComments && settings.postsPerProfile > 0) {
       this.planned.add(commentsKey);
-      const comments = await this.readThreads(commentsKey, newest(posts, settings.postsPerProfile));
+      const { items: comments, commit } = await this.readThreads(commentsKey, newest(posts, settings.postsPerProfile));
       this.consider({ key: commentsKey, source: { kind: "profile_comments", name: `@${handle}` }, filter: signature(settings.keywords), filtered: true, items: comments });
+      commit();
     }
   }
 
   /** readThreads reads the comments under the posts whose comment count grew.
+   *  The counts of the threads it read are only raised by `commit`, once the
+   *  caller has announced what they held: a pass that stops at the next
+   *  thread — a rate limit, a security check, Stop — must leave them due, or
+   *  the comments it had read but not yet announced are lost for good.
    *  A post seen for the first time is only recorded, unless it was posted
    *  after the source started: then its comments are all new. */
-  private async readThreads(key: string, posts: RawPost[], addressed?: "comment_on_post"): Promise<InstagramItem[]> {
+  private async readThreads(key: string, posts: RawPost[], addressed?: "comment_on_post"): Promise<{ items: InstagramItem[]; commit: () => void }> {
     const source = this.state.sources[key];
     const since = source?.since ?? this.at;
     const items: InstagramItem[] = [];
+    const staged: [RawPost, number][] = [];
     for (const post of posts) {
       const count = post.comments ?? 0;
       const previous = this.posts[post.pk];
@@ -455,9 +467,9 @@ class Pass {
         const item = commentItem(comment, context, addressed);
         if (item) items.push(item);
       }
-      this.watch(post, Math.max(count, thread.count ?? 0));
+      staged.push([post, Math.max(count, thread.count ?? 0)]);
     }
-    return items;
+    return { items, commit: () => staged.forEach(([post, comments]) => this.watch(post, comments)) };
   }
 
   private watch(post: RawPost, comments: number): void {
@@ -519,8 +531,18 @@ class Pass {
     if (previous) this.sources[key] = { ...previous, note };
   }
 
+  /** remember records a key as seen, and moves one seen again to the end:
+   *  the list keeps the newest MAX_SEEN keys, and an item still on screen
+   *  must not fall off it and be announced a second time. */
   private remember(key: string): void {
-    if (this.seen.has(key)) return;
+    if (this.seen.has(key)) {
+      const index = this.seenOrder.lastIndexOf(key);
+      if (index >= 0 && index < this.seenOrder.length - 1) {
+        this.seenOrder.splice(index, 1);
+        this.seenOrder.push(key);
+      }
+      return;
+    }
     this.seen.add(key);
     this.seenOrder.push(key);
   }

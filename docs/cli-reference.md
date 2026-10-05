@@ -70,7 +70,7 @@ In `json` format, stdout carries every [event](events-and-state.md#events), a `{
 | Code | Meaning |
 | --- | --- |
 | `0` | Finished, or stopped with <kbd>Ctrl</kbd>+<kbd>C</kbd>. |
-| `1` | An error, such as a profile that would not start under `once`, or a bad flag. |
+| `1` | An error, such as a profile that would not start under `once`, a pass that failed on an unexpected error, or a bad flag. |
 | `2` | No command, or an unknown one. |
 | `3` | `once` found the profile signed out. |
 | `4` | `once` was refused or rate-limited. |

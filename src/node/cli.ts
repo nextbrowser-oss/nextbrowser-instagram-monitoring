@@ -296,7 +296,12 @@ export async function main(argv: string[]): Promise<number> {
     const at = state.lastPass?.at ?? Date.now();
     print(format === "json" ? JSON.stringify({ type: "pass", at, summary: result.summary }) : describePass(result.summary, at));
     const backOff = !!result.summary.blocked || result.summary.rateLimited || result.summary.securityCheck;
-    if (command === "once" || stopping) return result.summary.securityCheck ? 5 : backOff ? 4 : result.summary.loginRequired ? 3 : 0;
+    if (command === "once" || stopping) {
+      if (result.summary.securityCheck) return 5;
+      if (backOff) return 4;
+      if (result.summary.loginRequired) return 3;
+      return result.summary.failed && command === "once" ? 1 : 0;
+    }
     await wait(scheduleDelay(intervalMs, { backOff: backOff || result.summary.loginRequired }));
     if (stopping) return 0;
   }
