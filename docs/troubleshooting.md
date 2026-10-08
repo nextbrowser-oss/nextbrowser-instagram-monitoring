@@ -25,7 +25,7 @@ A check right after the first sign-in on a new proxy is common. Several in a row
 
 An endpoint the monitor reads returned HTML. Instagram has changed or closed it. Check for a newer version of this package, and open an issue with the `request` log line (status and `refused`).
 
-Profiles and tagged posts are read with the GraphQL queries instagram.com's own profile page sends (`PolarisProfilePostsQuery`, `PolarisProfilePageContentQuery`, `PolarisProfileTaggedTabContentQuery`, in `src/scripts.ts`). Instagram rotates their doc ids now and then; a rotated one fails with an execution error in `reason`. To find the new id, open any profile in a signed-in browser, watch the POSTs to `/graphql/query` and `/api/graphql` in DevTools, and copy the `doc_id` sent with the same `fb_api_req_friendly_name`. Keep the monitor's requests on `/graphql/query` without the `x-asbd-id` and `x-fb-friendly-name` headers: from `robots.txt`, which has no page tokens, either one makes Instagram answer with its home page.
+Profiles and tagged posts are read with the GraphQL queries instagram.com's own profile page sends (`PolarisProfilePostsQuery`, `PolarisProfilePageContentQuery`, `PolarisProfileTaggedTabContentQuery`, in `src/scripts.ts`). Instagram rotates their doc ids and relay provider flags now and then. A rotated one answers "execution error" with no data (`query_broken` in the `request` log line), and the pass repairs it by itself: it opens your profile's tagged tab once, reads the current ids and flags off the page's own query modules (`queries_resolved` in the log), keeps them in `state.queries`, and reads on. If that fails too, the pass notes "Instagram changed how its profile pages ask for data…" and still reads activity and comments. To fix it by hand, open any profile in a signed-in browser, watch the POSTs to `/graphql/query` and `/api/graphql` in DevTools, and copy the `doc_id` sent with the same `fb_api_req_friendly_name` into `src/scripts.ts`. Keep the monitor's requests on `/graphql/query` without the `x-asbd-id` and `x-fb-friendly-name` headers: from `robots.txt`, which has no page tokens, either one makes Instagram answer with its home page.
 
 ## "@name is private" or "@name was not found"
 
@@ -33,7 +33,7 @@ A private profile shows its posts only to followers: follow it from the monitore
 
 ## A comment I expected is missing
 
-- It was written before its source's starting line: the first pass announces nothing, and a post seen for the first time is only recorded.
+- It was written before its source's starting line: the first pass announces nothing (it lists it, inside the age window), and after the first pass a post seen for the first time is only recorded.
 - The post is older than the account's `ownPosts` newest posts, or a watched profile's `postsPerProfile` newest.
 - The pass had read `maxCommentReads` threads already; the summary says how many wait, and the next pass reads them.
 - The thread is read one page deep, newest first: on a post with hundreds of comments, older ones are not read.

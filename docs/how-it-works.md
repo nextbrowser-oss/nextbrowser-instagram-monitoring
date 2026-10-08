@@ -65,9 +65,10 @@ A source whose keyword set changes gets a new starting line. A source removed fr
 
 Reading a thread is the expensive read, so the pass remembers each post's comment count (`state.posts`) and reads a thread only when the count grew:
 
-- A post seen for the first time is only recorded. Its existing comments are part of the starting line.
+- On a source's first read, every post with comments has its thread read, so what is already there inside `maxItemAgeMs` is in `result.matches` at once. It is part of the starting line: nothing is announced.
+- Later, a post seen for the first time is only recorded. Its existing comments are part of the starting line.
 - A post published after the source started is read as soon as it has comments: all of them are new.
-- A pass reads at most `maxCommentReads` threads (10). A post past that keeps its old count, so the next pass sees the growth and reads it — nothing is skipped, only delayed — and the summary says how many wait.
+- A pass reads at most `maxCommentReads` threads (10). A post past that keeps its old count (zero for a post never read), so the next pass sees the growth and reads it — nothing is skipped, only delayed — and the summary says how many wait.
 - A thread's count is raised only after what it held was announced. A pass that stops at the next thread — a rate limit, a security check, Stop — leaves it due, and the next pass reads it again.
 - A thread is read one page deep, newest comments first.
 

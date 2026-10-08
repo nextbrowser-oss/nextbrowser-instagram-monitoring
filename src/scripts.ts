@@ -37,15 +37,66 @@ export const WEB_APP_ID = "936619743392459";
 /** The GraphQL queries instagram.com's own profile page sends. The REST
  *  endpoints the monitor read before (users/web_profile_info, usertags/feed)
  *  answer a signed-in web session with a 429 "Page Not Found" page since
- *  October 2026. Instagram rotates doc ids now and then: when a read starts
- *  failing with an execution error, open a profile in a browser, watch the
- *  POSTs to /graphql/query and /api/graphql, and copy the new doc_id of the
- *  query with the same friendly name. */
-export const PROFILE_POSTS_QUERY = { path: "/graphql/query", name: "PolarisProfilePostsQuery", docId: "28542612348729311" } as const;
+ *  October 2026. Instagram rotates doc ids and the relay provider flags each
+ *  query must carry; when one answers "execution error" with no data the
+ *  engine reads the current ones off a profile page (resolveQueriesScript)
+ *  and keeps them in the state. These are the ones known when this was
+ *  written. */
+export interface GraphQuery {
+  path: string;
+  name: string;
+  docId: string;
+  /** The __relay_internal__pv__ variables, sent with every call. */
+  providers: Record<string, ProviderValue>;
+}
+export type ProviderValue = boolean | number | string | null;
+export type QueryKey = "posts" | "content" | "tagged";
+export type GraphQueries = Record<QueryKey, GraphQuery>;
+
+/** The friendly names, which identify a query across doc id changes. */
+export const QUERY_NAMES: Record<QueryKey, string> = {
+  posts: "PolarisProfilePostsQuery",
+  content: "PolarisProfilePageContentQuery",
+  tagged: "PolarisProfileTaggedTabContentQuery",
+};
+
+export const PROFILE_POSTS_QUERY: GraphQuery = {
+  path: "/graphql/query",
+  name: QUERY_NAMES.posts,
+  docId: "28542612348729311",
+  providers: {
+    __relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider: true,
+    __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: true,
+    __relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider: false,
+  },
+};
 // The page sends the content query to /api/graphql, which wants the page's
 // lsd token; /graphql/query answers the same doc id without it.
-export const PROFILE_CONTENT_QUERY = { path: "/graphql/query", name: "PolarisProfilePageContentQuery", docId: "28036671149327607" } as const;
-export const PROFILE_TAGGED_QUERY = { path: "/graphql/query", name: "PolarisProfileTaggedTabContentQuery", docId: "28463910693308962" } as const;
+export const PROFILE_CONTENT_QUERY: GraphQuery = {
+  path: "/graphql/query",
+  name: QUERY_NAMES.content,
+  docId: "28036671149327607",
+  providers: {
+    __relay_internal__pv__PolarisCannesGuardianExperienceEnabledrelayprovider: true,
+    __relay_internal__pv__PolarisCASB976ProfileEnabledrelayprovider: false,
+    __relay_internal__pv__PolarisWebSchoolsEnabledrelayprovider: false,
+    __relay_internal__pv__PolarisRepostsConsumptionEnabledrelayprovider: true,
+    __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: true,
+  },
+};
+export const PROFILE_TAGGED_QUERY: GraphQuery = {
+  path: "/graphql/query",
+  name: QUERY_NAMES.tagged,
+  docId: "28463910693308962",
+  providers: { __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: true },
+};
+export const DEFAULT_QUERIES: GraphQueries = { posts: PROFILE_POSTS_QUERY, content: PROFILE_CONTENT_QUERY, tagged: PROFILE_TAGGED_QUERY };
+
+/** The page whose scripts define all three queries: the tagged tab of a
+ *  profile loads the posts, content and tagged query modules. */
+export function queriesPage(handle: string): string {
+  return `https://www.instagram.com/${encodeURIComponent(handle || "instagram")}/tagged/`;
+}
 
 const FETCH_TIMEOUT_MS = 20_000;
 /** How much of a caption or a comment is kept. */
@@ -74,6 +125,9 @@ export interface FetchMeta {
   /** Instagram is limiting the account: HTTP 429, feedback_required, or a
    *  spam flag on the answer. */
   throttled: boolean;
+  /** A GraphQL query Instagram no longer knows: "execution error" with no
+   *  data, or "invalid request". Its doc id or provider flags have changed. */
+  query_broken?: boolean;
 }
 
 export interface RawUser {
@@ -210,7 +264,8 @@ const REQUEST_HELPER = String.raw`
     return { meta: meta, body: body };
   };
   const graphql = async (query, variables) => {
-    const body = new URLSearchParams({ doc_id: query.docId, variables: JSON.stringify(variables), fb_api_req_friendly_name: query.name, server_timestamps: "true" }).toString();
+    const all = Object.assign({}, variables, query.providers || {});
+    const body = new URLSearchParams({ doc_id: query.docId, variables: JSON.stringify(all), fb_api_req_friendly_name: query.name, server_timestamps: "true" }).toString();
     // Not the web app's x-asbd-id or x-fb-friendly-name: without the page's
     // lsd and fb_dtsg tokens, which robots.txt does not have, either header
     // makes the server answer with its home page instead of data.
@@ -223,6 +278,10 @@ const REQUEST_HELPER = String.raw`
       const errors = Array.isArray(got.body.errors) ? got.body.errors : [];
       got.meta.ok = false;
       if (!got.meta.reason) got.meta.reason = String((errors[0] && (errors[0].summary || errors[0].message)) || "no data").slice(0, 160);
+      // A doc id or provider flag Instagram no longer accepts. An unknown
+      // name is a field_exception instead, or a null connection beside data.
+      got.meta.query_broken = (got.meta.status === 400 && got.body.message === "invalid request") ||
+        errors.some((error) => /execution error/i.test(String(error && error.message)));
     }
     return { meta: got.meta, data: got.meta.ok ? data : null };
   };`;
@@ -301,48 +360,37 @@ export function meScript(): string {
 })()`;
 }
 
-/** The variables instagram.com's profile page sends with each query; the
- *  relay provider flags are copied as they are, since the server checks them. */
+/** The variables instagram.com's profile page sends with each query, less
+ *  the relay provider flags, which come with the query (GraphQuery.providers). */
 export function profilePostsVariables(username: string): Record<string, unknown> {
   return {
     data: { count: 12, include_reel_media_seen_timestamp: true, include_relationship_info: true, latest_besties_reel_media: true, latest_reel_media: true },
     username,
-    __relay_internal__pv__PolarisMultiCaptionCarouselEnabledrelayprovider: true,
-    __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: true,
-    __relay_internal__pv__PolarisReelsRecoDebugOverlayEnabledrelayprovider: false,
   };
 }
 
 export function profileContentVariables(userPk: string): Record<string, unknown> {
-  return {
-    enable_integrity_filters: true,
-    id: userPk,
-    __relay_internal__pv__PolarisCannesGuardianExperienceEnabledrelayprovider: true,
-    __relay_internal__pv__PolarisCASB976ProfileEnabledrelayprovider: false,
-    __relay_internal__pv__PolarisWebSchoolsEnabledrelayprovider: false,
-    __relay_internal__pv__PolarisRepostsConsumptionEnabledrelayprovider: true,
-    __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: true,
-  };
+  return { enable_integrity_filters: true, id: userPk };
 }
 
 export function profileTaggedVariables(userPk: string): Record<string, unknown> {
-  return { count: 12, user_id: userPk, __relay_internal__pv__PolarisShortDramaEnabledrelayprovider: true };
+  return { count: 12, user_id: userPk };
 }
 
 /** profileScript reads a profile: who it is, its counts, and its newest posts
  *  (twelve, pinned ones first, as the profile page shows them). The posts come
  *  by username and carry the owner's pk, which the counts need; a profile
  *  without posts is found by search. No match anywhere means no such profile. */
-export function profileScript(username: string): string {
+export function profileScript(username: string, queries: GraphQueries = DEFAULT_QUERIES): string {
   return String.raw`(async () => {${REQUEST_HELPER}${READ_HELPER}
   const username = ${jsLiteral(username)};
   const out = { found: false, private: false, user: null, followers: null, following: null, posts_count: null, posts: [] };
-  const timeline = await graphql(${jsLiteral(PROFILE_POSTS_QUERY)}, ${jsLiteral(profilePostsVariables(username))});
+  const timeline = await graphql(${jsLiteral(queries.posts)}, ${jsLiteral(profilePostsVariables(username))});
   Object.assign(out, timeline.meta);
   // An unknown name answers 200 with errors and no data; search tells it
   // from a query that broke. Anything else that failed ends the read here.
   const queryError = !timeline.meta.ok && timeline.meta.status === 200 && !!timeline.meta.reason && !timeline.meta.refused &&
-    !timeline.meta.login_required && !timeline.meta.checkpoint && !timeline.meta.throttled;
+    !timeline.meta.login_required && !timeline.meta.checkpoint && !timeline.meta.throttled && !timeline.meta.query_broken;
   if (!timeline.meta.ok && !queryError) return out;
   const conn = timeline.data && timeline.data.xdt_api__v1__feed__user_timeline_graphql_connection;
   const nodes = conn && Array.isArray(conn.edges) ? conn.edges.map((edge) => edge && edge.node).filter((node) => node && typeof node === "object") : [];
@@ -359,7 +407,7 @@ export function profileScript(username: string): string {
     pk = hit ? idOf(hit.pk || hit.pk_id || hit.id) : "";
     if (!pk) return Object.assign(out, search.meta);
   }
-  const content = await graphql(${jsLiteral(PROFILE_CONTENT_QUERY)}, Object.assign(${jsLiteral(profileContentVariables(""))}, { id: pk }));
+  const content = await graphql(${jsLiteral(queries.content)}, Object.assign(${jsLiteral(profileContentVariables(""))}, { id: pk }));
   if (!content.meta.ok) return Object.assign(out, content.meta);
   const u = content.data.user;
   if (!u || typeof u !== "object") return out;
@@ -414,14 +462,19 @@ export function activityScript(): string {
     const args = story.args && typeof story.args === "object" ? story.args : {};
     const media = Array.isArray(args.media) && args.media[0] ? args.media[0] : {};
     const commentIds = Array.isArray(args.comment_ids) ? args.comment_ids : [];
+    // Where tapping the entry leads, e.g. "comments_v2?media_id=…&target_comment_id=…":
+    // the ids again, for an entry that leaves the fields above out.
+    const destination = str(args.destination, 400);
+    const query = destination.indexOf("?") >= 0 ? new URLSearchParams(destination.slice(destination.indexOf("?") + 1)) : null;
+    const from = (name) => (query ? query.get(name) || "" : "");
     return {
       pk: str(story.pk || args.tuuid, 64),
       story_type: num(story.story_type) !== null ? num(story.story_type) : num(story.type),
       text: str(args.text || args.rich_text, ${TEXT_MAX}),
-      profile: str(args.profile_name, 40),
+      profile: str(args.profile_name || (args.inline_follow && args.inline_follow.user_info && args.inline_follow.user_info.username), 40),
       timestamp: num(args.timestamp),
-      comment_id: idOf(args.comment_id || commentIds[0]),
-      media_id: idOf(media.id)
+      comment_id: idOf(args.comment_id || commentIds[0] || from("target_comment_id") || from("comment_id")),
+      media_id: idOf(media.id || from("media_id"))
     };
   }).filter(Boolean);
   return out;
@@ -429,13 +482,59 @@ export function activityScript(): string {
 }
 
 /** tagsScript reads the posts the account is tagged in. */
-export function tagsScript(userPk: string): string {
+export function tagsScript(userPk: string, queries: GraphQueries = DEFAULT_QUERIES): string {
   return String.raw`(async () => {${REQUEST_HELPER}${READ_HELPER}
-  const got = await graphql(${jsLiteral(PROFILE_TAGGED_QUERY)}, ${jsLiteral(profileTaggedVariables(userPk))});
+  const got = await graphql(${jsLiteral(queries.tagged)}, ${jsLiteral(profileTaggedVariables(userPk))});
   const out = Object.assign({ posts: [] }, got.meta);
   if (!got.meta.ok) return out;
   const conn = got.data.xdt_api__v1__usertags__user_id__feed_connection;
   out.posts = (conn && Array.isArray(conn.edges) ? conn.edges : []).map((edge) => apiPost(edge && edge.node)).filter((post) => post && post.pk);
+  return out;
+})()`;
+}
+
+export interface ResolvedQuery {
+  docId: string;
+  providers: Record<string, ProviderValue>;
+}
+
+export interface QueriesSnapshot {
+  /** All three queries were found. */
+  ok: boolean;
+  queries: Partial<Record<QueryKey, ResolvedQuery>>;
+  /** The friendly names the page did not define (yet). */
+  missing: string[];
+}
+
+/** resolveQueriesScript reads the current doc id and relay provider flags of
+ *  each query off a full instagram.com page, from the same compiled modules
+ *  the page itself sends them with. It runs on queriesPage(), not robots.txt,
+ *  which has no app scripts. */
+export function resolveQueriesScript(): string {
+  return String.raw`(() => {
+  const names = ${jsLiteral(QUERY_NAMES)};
+  const out = { ok: false, queries: {}, missing: [] };
+  const load = typeof window.require === "function" ? window.require : null;
+  for (const [key, name] of Object.entries(names)) {
+    let params = null;
+    try {
+      const mod = load ? load(name + ".graphql") : null;
+      params = mod && (mod.params || (mod.default && mod.default.params)) || null;
+    } catch (error) {
+      params = null;
+    }
+    const docId = params && /^\d{5,30}$/.test(String(params.id || "")) ? String(params.id) : "";
+    if (!docId) { out.missing.push(name); continue; }
+    const providers = {};
+    for (const [flag, provider] of Object.entries(params.providedVariables || {})) {
+      if (!/^__relay_internal__pv__\w{1,120}$/.test(flag)) continue;
+      let value = null;
+      try { value = provider && typeof provider.get === "function" ? provider.get() : provider; } catch (error) { value = null; }
+      providers[flag] = typeof value === "boolean" || typeof value === "number" || typeof value === "string" ? value : null;
+    }
+    out.queries[key] = { docId: docId, providers: providers };
+  }
+  out.ok = out.missing.length === 0;
   return out;
 })()`;
 }
@@ -458,5 +557,6 @@ export function allScripts(): Record<string, string> {
     comments: commentsScript("3254998171211465227"),
     activity: activityScript(),
     tags: tagsScript("25025320"),
+    queries: resolveQueriesScript(),
   };
 }

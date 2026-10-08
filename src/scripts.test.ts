@@ -11,6 +11,7 @@
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  DEFAULT_QUERIES,
   PROFILE_CONTENT_QUERY,
   PROFILE_POSTS_QUERY,
   PROFILE_TAGGED_QUERY,
@@ -23,12 +24,14 @@ import {
   meScript,
   originScript,
   profileScript,
+  resolveQueriesScript,
   tagsScript,
   type ActivitySnapshot,
   type CommentsSnapshot,
   type MeSnapshot,
   type OriginSnapshot,
   type ProfileSnapshot,
+  type QueriesSnapshot,
   type TagsSnapshot,
 } from "./scripts.js";
 
@@ -243,10 +246,78 @@ describe("profileScript", () => {
     expect(await run<ProfileSnapshot>(profileScript("rival_store"))).toMatchObject({ ok: false, found: false, reason: "Query not found" });
   });
 
+  it("sends the query's relay provider flags with the variables", async () => {
+    page("https://www.instagram.com/robots.txt");
+    const asked = answer({ body: { errors: [{ message: "execution error", severity: "CRITICAL" }], data: null, status: "ok" } });
+    await run<ProfileSnapshot>(profileScript("rival_store", { ...DEFAULT_QUERIES, posts: { ...DEFAULT_QUERIES.posts, docId: "123456789", providers: { __relay_internal__pv__Xrelayprovider: false } } }));
+    const body = new URLSearchParams(String(asked[0]!.init.body));
+    expect(body.get("doc_id")).toBe("123456789");
+    expect(JSON.parse(body.get("variables")!)).toEqual({ data: expect.any(Object), username: "rival_store", __relay_internal__pv__Xrelayprovider: false });
+  });
+
+  it("calls a query Instagram no longer knows broken, without searching for the name", async () => {
+    page("https://www.instagram.com/robots.txt");
+    const asked = answer({ body: { errors: [{ message: "execution error", severity: "CRITICAL" }], data: null, status: "ok" } });
+    expect(await run<ProfileSnapshot>(profileScript("rival_store"))).toMatchObject({ ok: false, found: false, query_broken: true, reason: "execution error" });
+    expect(asked).toHaveLength(1);
+  });
+
+  it("calls an invalid request broken too", async () => {
+    page("https://www.instagram.com/robots.txt");
+    answer({ status: 400, body: { message: "invalid request", errors: [{ message: "execution error", severity: "CRITICAL" }], status: "fail" } });
+    expect(await run<ProfileSnapshot>(profileScript("rival_store"))).toMatchObject({ ok: false, query_broken: true });
+  });
+
+  it("does not call an unknown name a broken query", async () => {
+    page("https://www.instagram.com/robots.txt");
+    answerBy((_path, init) => docOf(init) === PROFILE_POSTS_QUERY.docId
+      ? { body: `{"errors":[{"message":"A server error field_exception occured.","code":1357005}],"extensions":{"is_final":true}}` }
+      : { body: { users: [], status: "ok" } });
+    const snapshot = await run<ProfileSnapshot>(profileScript("nobody_here"));
+    expect(snapshot.query_broken).toBeFalsy();
+  });
+
   it("finds no profile in a 404", async () => {
     page("https://www.instagram.com/robots.txt");
     answer({ status: 404, body: { data: { user: null }, status: "ok" } });
     expect(await run<ProfileSnapshot>(profileScript("nobody_here"))).toMatchObject({ status: 404, found: false });
+  });
+});
+
+describe("resolveQueriesScript", () => {
+  afterEach(() => {
+    delete (window as unknown as { require?: unknown }).require;
+  });
+
+  it("reads each query's doc id and provider flags off the page's modules", async () => {
+    page("https://www.instagram.com/acme/tagged/");
+    const modules: Record<string, unknown> = {
+      "PolarisProfilePostsQuery.graphql": { params: { id: "111111111", providedVariables: { __relay_internal__pv__Arelayprovider: { get: () => true }, "not a flag": { get: () => 1 } } } },
+      "PolarisProfilePageContentQuery.graphql": { default: { params: { id: "222222222", providedVariables: { __relay_internal__pv__Brelayprovider: { get: () => { throw new Error("no"); } } } } } },
+      "PolarisProfileTaggedTabContentQuery.graphql": { params: { id: "333333333" } },
+    };
+    (window as unknown as { require: (name: string) => unknown }).require = (name) => {
+      if (!(name in modules)) throw new Error(`Requiring unknown module "${name}"`);
+      return modules[name];
+    };
+    expect(await run<QueriesSnapshot>(resolveQueriesScript())).toEqual({
+      ok: true,
+      missing: [],
+      queries: {
+        posts: { docId: "111111111", providers: { __relay_internal__pv__Arelayprovider: true } },
+        content: { docId: "222222222", providers: { __relay_internal__pv__Brelayprovider: null } },
+        tagged: { docId: "333333333", providers: {} },
+      },
+    });
+  });
+
+  it("says which queries the page has not defined", async () => {
+    page("https://www.instagram.com/robots.txt");
+    expect(await run<QueriesSnapshot>(resolveQueriesScript())).toEqual({
+      ok: false,
+      queries: {},
+      missing: ["PolarisProfilePostsQuery", "PolarisProfilePageContentQuery", "PolarisProfileTaggedTabContentQuery"],
+    });
   });
 });
 
@@ -282,6 +353,17 @@ describe("activityScript", () => {
     expect(snapshot.stories).toEqual([
       { pk: "abc", story_type: 66, text: "fan mentioned you in a comment: @acme_shop is this legit?", profile: "fan", timestamp: 1790935600.5, comment_id: "18000000000000001", media_id: "3254998171211465227" },
       { pk: "", story_type: 101, text: "fan2 started following you.", profile: "fan2", timestamp: 1790900000, comment_id: "", media_id: "" },
+    ]);
+  });
+
+  it("takes the ids from where the entry leads when its fields leave them out", async () => {
+    page("https://www.instagram.com/robots.txt");
+    answer({
+      body: `{"new_stories":[{"story_type":12,"pk":"def","args":{"text":"buyer commented: does it ship?","inline_follow":{"user_info":{"username":"buyer"}},
+        "timestamp":1790935700,"destination":"comments_v2?media_id=3254998171211465227_100&target_comment_id=18000000000000009"}}],"old_stories":[],"status":"ok"}`,
+    });
+    expect((await run<ActivitySnapshot>(activityScript())).stories).toEqual([
+      { pk: "def", story_type: 12, text: "buyer commented: does it ship?", profile: "buyer", timestamp: 1790935700, comment_id: "18000000000000009", media_id: "3254998171211465227" },
     ]);
   });
 });

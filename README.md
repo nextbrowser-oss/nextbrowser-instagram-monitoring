@@ -89,7 +89,7 @@ The engine stops at step 2 on purpose: whatever it finds, a person decides what 
 3. Add the profiles to watch (competitors, partners) and your keywords (brand, product names, common misspellings), and words to skip.
 4. Pick an interval — 15 minutes or more — and press **Start**.
 
-The first pass draws the starting line and announces nothing; from the second pass on, the panel lists what needs a look, most urgent first, with *Draft reply* on every match.
+The first pass draws the starting line and announces nothing, but the panel already lists what is there inside the age window — your posts' comments and keyword comments under watched profiles included — most urgent first, with *Draft reply* on every match. From the second pass on, what is new is marked.
 
 Use a profile with its own proxy, and an account you are prepared to have rate-limited while you tune the settings: Instagram restricts accounts that read faster than a person would.
 
@@ -128,7 +128,7 @@ node dist/node/bin.js run --profile <your-profile> --profiles <competitor1>,<com
 
 What to expect:
 
-1. The first pass records every source as its starting line and announces nothing.
+1. The first pass records every source as its starting line and announces nothing; it still reads the comment threads, so `state` and the app's panel show what is already there.
 2. Each later pass prints new matches, most urgent marked `HIGH`, with the reasons and a direct link, then waits about fifteen minutes (`--interval`).
 3. Stop it with <kbd>Ctrl</kbd>+<kbd>C</kbd>. The next run continues from the saved state in `~/.nextbrowser/instagram-monitoring/<profile>.json`.
 

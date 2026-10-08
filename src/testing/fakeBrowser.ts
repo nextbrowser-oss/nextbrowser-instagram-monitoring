@@ -11,6 +11,7 @@ import type {
   MeSnapshot,
   OriginSnapshot,
   ProfileSnapshot,
+  QueriesSnapshot,
   RawComment,
   RawPost,
   RawStory,
@@ -37,8 +38,14 @@ export class FakeInstagram implements MonitorBrowser {
   comments: Record<string, RawComment[]> = {};
   stories: RawStory[] = [];
   tagged: RawPost[] = [];
+  /** Doc ids Instagram no longer knows: a profile or tags read whose script
+   *  carries one answers query_broken. */
+  staleDocs: string[] = [];
+  /** What the queries page defines, for the engine's refresh. */
+  liveQueries: QueriesSnapshot = { ok: false, queries: {}, missing: ["PolarisProfilePostsQuery", "PolarisProfilePageContentQuery", "PolarisProfileTaggedTabContentQuery"] };
   readonly opened: string[] = [];
   readonly labels: string[] = [];
+  readonly scripts: string[] = [];
 
   async open(url: string): Promise<void> {
     this.url = url;
@@ -47,8 +54,16 @@ export class FakeInstagram implements MonitorBrowser {
 
   async waitForLoad(): Promise<void> {}
 
-  async evaluate<T>(_script: string, label = ""): Promise<T> {
+  async evaluate<T>(script: string, label = ""): Promise<T> {
     this.labels.push(label);
+    this.scripts.push(script);
+    if ((label.startsWith("profile @") || label === "tags") && this.staleDocs.some((doc) => script.includes(doc))) {
+      const base = this.meta(label);
+      const broken = { ...base, ok: false, reason: "execution error", query_broken: true };
+      return (label === "tags"
+        ? { ...broken, posts: [] }
+        : { ...broken, found: false, private: false, user: null, followers: null, following: null, posts_count: null, posts: [] }) as T;
+    }
     return this.answer(label) as T;
   }
 
@@ -93,6 +108,7 @@ export class FakeInstagram implements MonitorBrowser {
       const meta = this.meta(label);
       return { ...meta, stories: meta.ok ? this.stories : [] } satisfies ActivitySnapshot;
     }
+    if (label === "queries") return this.liveQueries;
     if (label === "tags") {
       const meta = this.meta(label);
       return { ...meta, posts: meta.ok ? this.tagged : [] } satisfies TagsSnapshot;

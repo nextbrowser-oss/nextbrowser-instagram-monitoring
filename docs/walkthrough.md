@@ -25,7 +25,7 @@ node dist/node/bin.js run --profile acme --profiles rival_store --keywords "acme
 
 ## 2. The first pass draws the starting line
 
-The first pass reads every source once and announces nothing: what is already there is the starting line, and a monitor that greets you with yesterday's 200 comments is noise, not news. It records each post's comment count, so from now on it reads a thread only when that count grows.
+The first pass reads every source once and announces nothing: what is already there is the starting line, and a monitor that greets you with yesterday's 200 comments is noise, not news. It does read the comment threads of the newest posts (up to `maxCommentReads`), so a dashboard can list what is there inside the age window right away. It records each post's comment count, so from now on it reads a thread only when that count grows.
 
 ```text
 09:00  signed in as @acme_shop

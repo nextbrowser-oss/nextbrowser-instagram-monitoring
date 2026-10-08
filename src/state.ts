@@ -7,6 +7,7 @@
 import { MAX_KEYWORDS, normalizeKeywords } from "./keywords.js";
 import { mediaPk } from "./ids.js";
 import { DEFAULT_URGENT_TERMS } from "./triage.js";
+import type { ProviderValue, QueryKey, ResolvedQuery } from "./scripts.js";
 
 export interface MonitorSettings {
   /** Words and phrases to find: a brand, a product, a competitor. */
@@ -118,7 +119,12 @@ export interface MonitorState {
   /** Keyed by lowercased handle; the account itself included. */
   followers: Record<string, FollowerStats>;
   lastPass?: PassRecord;
+  /** The GraphQL doc ids and provider flags read off instagram.com after the
+   *  built-in ones stopped working; absent while those still work. */
+  queries?: StoredQueries;
 }
+
+export type StoredQueries = Partial<Record<QueryKey, ResolvedQuery>> & { resolvedAt: number };
 
 export const MAX_PROFILES = 10;
 export const MAX_URGENT_TERMS = 50;
@@ -292,7 +298,30 @@ export function normalizeState(raw: unknown): MonitorState {
       notes: Array.isArray(pass.notes) ? pass.notes.filter((note): note is string => typeof note === "string").slice(-MAX_PASS_NOTES) : [],
     };
   }
+  const queries = normalizeQueries(record.queries);
+  if (queries) state.queries = queries;
   return state;
+}
+
+const QUERY_KEYS: QueryKey[] = ["posts", "content", "tagged"];
+
+function normalizeQueries(raw: unknown): StoredQueries | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const record = raw as Record<string, unknown>;
+  const resolvedAt = finite(record.resolvedAt);
+  if (resolvedAt === undefined) return undefined;
+  const out: StoredQueries = { resolvedAt };
+  for (const key of QUERY_KEYS) {
+    const query = record[key] as Partial<ResolvedQuery> | undefined;
+    if (!query || typeof query !== "object" || typeof query.docId !== "string" || !/^\d{5,30}$/.test(query.docId)) continue;
+    const providers: Record<string, ProviderValue> = {};
+    for (const [flag, value] of Object.entries(query.providers ?? {}).slice(0, 40)) {
+      if (!/^__relay_internal__pv__\w{1,120}$/.test(flag)) continue;
+      providers[flag] = typeof value === "boolean" || typeof value === "number" || typeof value === "string" ? value : null;
+    }
+    out[key] = { docId: query.docId, providers };
+  }
+  return QUERY_KEYS.some((key) => out[key]) ? out : undefined;
 }
 
 /** withSettings applies a settings patch, normalized. */

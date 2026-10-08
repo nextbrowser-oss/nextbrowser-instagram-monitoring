@@ -111,6 +111,7 @@ Something new that needs a look: a mention, a tag, a reply, a comment on the acc
 - `sources[*].since` is the source's starting line; `filter` the keyword set it was read with.
 - `posts` is what makes comment reads cheap: a post's comment count when its thread was last read. Up to 300 posts.
 - `followers[*].history` keeps every change, up to 200, enough to draw a chart.
+- `queries`, present only after Instagram rotated a query, holds the doc ids and relay provider flags a pass read off instagram.com (`{ "posts": { "docId": "…", "providers": { … } }, …, "resolvedAt": … }`). Later passes use them instead of the built-in ones.
 
 Pass anything read from storage through `normalizeState`.
 

@@ -22,6 +22,7 @@ import { activityItem, commentItem, isOwn, matchText, postContext, postItem, typ
 import { keywordMatcher, signature, type Matcher } from "./keywords.js";
 import { errorText, makeLogger, type LogSink, type Logger } from "./log.js";
 import {
+  DEFAULT_QUERIES,
   LANDING_URL,
   SIGN_IN_URL,
   activityScript,
@@ -29,13 +30,18 @@ import {
   meScript,
   originScript,
   profileScript,
+  queriesPage,
+  resolveQueriesScript,
   tagsScript,
   type ActivitySnapshot,
   type CommentsSnapshot,
   type FetchMeta,
   type MeSnapshot,
   type OriginSnapshot,
+  type GraphQueries,
   type ProfileSnapshot,
+  type QueriesSnapshot,
+  type QueryKey,
   type RawPost,
   type TagsSnapshot,
 } from "./scripts.js";
@@ -50,11 +56,28 @@ import {
   type MonitorState,
   type PostWatch,
   type SourceState,
+  type StoredQueries,
 } from "./state.js";
 import { byUrgency, triage } from "./triage.js";
 
 const BLANK_PAGE = "about:blank";
 const LOAD_WAIT_SECONDS = 15;
+/** How often the queries page is asked for its query modules, which load
+ *  after the page itself. */
+const QUERY_RESOLVE_TRIES = 6;
+const QUERY_RESOLVE_PAUSE_MS = 1500;
+const BROKEN_QUERIES_NOTE = "Instagram changed how its profile pages ask for data and the monitor could not catch up: profiles and tagged posts were not read. Update the monitor; activity and comments still work.";
+
+/** mergeQueries lays the doc ids and flags read off instagram.com over the
+ *  built-in ones. */
+export function mergeQueries(stored?: StoredQueries): GraphQueries {
+  const out = { ...DEFAULT_QUERIES };
+  for (const key of Object.keys(out) as QueryKey[]) {
+    const found = stored?.[key];
+    if (found) out[key] = { ...out[key], docId: found.docId, providers: found.providers };
+  }
+  return out;
+}
 
 export type Sleep = (ms: number) => Promise<void>;
 
@@ -197,6 +220,9 @@ class Pass {
   private readonly urgent: Matcher;
   private handle = "";
   private ownPostIds = new Set<string>();
+  private queries: GraphQueries;
+  /** One refresh of the query ids per pass, whatever happens. */
+  private queriesRefreshed = false;
   private readonly summary: PassSummary = {
     signedIn: false,
     loginRequired: false,
@@ -234,6 +260,7 @@ class Pass {
     this.keywords = keywordMatcher(settings.keywords);
     this.excluded = keywordMatcher(settings.excludeKeywords);
     this.urgent = keywordMatcher(settings.urgentTerms);
+    this.queries = mergeQueries(this.state.queries);
   }
 
   async run(): Promise<PassResult> {
@@ -350,7 +377,8 @@ class Pass {
   private async readOwnProfile(): Promise<ProfileSnapshot | undefined> {
     if (!this.handle) return undefined;
     this.step("Reading your profile");
-    const profile = await this.fetch<ProfileSnapshot>(profileScript(this.handle), `profile @${this.handle.toLowerCase()}`);
+    const own = this.handle;
+    const profile = await this.fetchGraph<ProfileSnapshot>((queries) => profileScript(own, queries), `profile @${own.toLowerCase()}`);
     if (!profile.ok || !profile.found) {
       this.note(`Your own profile could not be read (HTTP ${profile.status}${profile.reason ? `, "${profile.reason}"` : ""}); comments on your posts wait for the next pass.`);
       return undefined;
@@ -379,7 +407,7 @@ class Pass {
   private async readTags(userPk: string): Promise<void> {
     this.step("Reading posts you are tagged in");
     this.planned.add("tags");
-    const tags = await this.fetch<TagsSnapshot>(tagsScript(userPk), "tags");
+    const tags = await this.fetchGraph<TagsSnapshot>((queries) => tagsScript(userPk, queries), "tags");
     if (!tags.ok) {
       this.sourceFailed("tags", "Posts you are tagged in", tags);
       return;
@@ -405,7 +433,7 @@ class Pass {
     const postsKey = `profile:${lower}:posts`;
     const commentsKey = `profile:${lower}:comments`;
     this.planned.add(postsKey);
-    const profile = await this.fetch<ProfileSnapshot>(profileScript(handle), `profile @${lower}`);
+    const profile = await this.fetchGraph<ProfileSnapshot>((queries) => profileScript(handle, queries), `profile @${lower}`);
     if (!profile.found) {
       const why = profile.status === 404 || (profile.ok && !profile.found)
         ? `@${handle} was not found: check the spelling.`
@@ -435,8 +463,11 @@ class Pass {
    *  caller has announced what they held: a pass that stops at the next
    *  thread — a rate limit, a security check, Stop — must leave them due, or
    *  the comments it had read but not yet announced are lost for good.
-   *  A post seen for the first time is only recorded, unless it was posted
-   *  after the source started: then its comments are all new. */
+   *  On a source's first read every post with comments is read, so what is
+   *  already there inside the age window is listed at once; the source's
+   *  baseline keeps it from being announced. Later, a post seen for the first
+   *  time is only recorded, unless it was posted after the source started:
+   *  then its comments are all new. */
   private async readThreads(key: string, posts: RawPost[], addressed?: "comment_on_post"): Promise<{ items: InstagramItem[]; commit: () => void }> {
     const source = this.state.sources[key];
     const since = source?.since ?? this.at;
@@ -446,13 +477,15 @@ class Pass {
       const count = post.comments ?? 0;
       const previous = this.posts[post.pk];
       const postedSince = post.taken_at !== null && post.taken_at * 1000 >= since;
-      const grew = previous ? count > previous.comments : !!source && postedSince && count > 0;
+      const grew = previous ? count > previous.comments : count > 0 && (!source || postedSince);
       if (!grew) {
         this.watch(post, previous ? Math.min(previous.comments, count) : count);
         continue;
       }
       if (this.summary.commentReads >= this.state.settings.maxCommentReads) {
-        // Keep the old count: the next pass sees the growth and reads it.
+        // Keep the old count: the next pass sees the growth and reads it. A
+        // post never read is kept at zero comments for the same reason.
+        if (!previous) this.watch(post, 0);
         this.summary.commentReadsDeferred += 1;
         continue;
       }
@@ -601,6 +634,7 @@ class Pass {
       ...(result.login_required ? { login_required: true } : {}),
       ...(result.checkpoint ? { checkpoint: true } : {}),
       ...(result.throttled ? { throttled: true } : {}),
+      ...(result.query_broken ? { query_broken: true } : {}),
     });
     if (result.login_required) throw new SignedOut();
     if (result.checkpoint) throw new SecurityCheck();
@@ -612,6 +646,58 @@ class Pass {
     // Instagram changed or closed it; a 404 page is about the one profile.
     if (result.refused && result.status !== 404) throw new Blocked(`instagram.com answered with a page instead of data (HTTP ${result.status}: ${result.refused}).`);
     return result;
+  }
+
+  /** fetchGraph runs a script built on the GraphQL queries. When Instagram no
+   *  longer knows one, the current ids are read off a profile page once per
+   *  pass and the script runs again; a query still broken after that is
+   *  noted and handed back as a failed read, so the sources that do not need
+   *  it are still read. */
+  private async fetchGraph<T extends FetchMeta>(build: (queries: GraphQueries) => string, label: string): Promise<T> {
+    let result = await this.fetch<T>(build(this.queries), label);
+    if (!result.query_broken) return result;
+    if (!this.queriesRefreshed) {
+      await this.refreshQueries();
+      result = await this.fetch<T>(build(this.queries), label);
+      if (!result.query_broken) return result;
+    }
+    this.note(BROKEN_QUERIES_NOTE);
+    return result;
+  }
+
+  /** refreshQueries opens the account's tagged tab, whose scripts define all
+   *  three queries, reads their current doc ids and provider flags, keeps
+   *  them in the state, and goes back to the landing page. */
+  private async refreshQueries(): Promise<void> {
+    this.queriesRefreshed = true;
+    this.step("Updating how profiles are read");
+    const before = Object.fromEntries(Object.entries(this.queries).map(([key, query]) => [key, query.docId]));
+    let found: QueriesSnapshot | undefined;
+    try {
+      await this.browser.open(queriesPage(this.handle));
+      await this.browser.waitForLoad(LOAD_WAIT_SECONDS).catch(() => undefined);
+      for (let attempt = 0; attempt < QUERY_RESOLVE_TRIES; attempt += 1) {
+        this.checkStop();
+        found = await this.browser.evaluate<QueriesSnapshot>(resolveQueriesScript(), "queries");
+        if (found?.ok) break;
+        await this.sleep(QUERY_RESOLVE_PAUSE_MS);
+      }
+    } catch (error) {
+      if (error instanceof StopRequested) throw error;
+      this.log("queries_failed", { error: errorText(error) });
+    } finally {
+      await this.browser.open(LANDING_URL);
+      await this.browser.waitForLoad(LOAD_WAIT_SECONDS).catch(() => undefined);
+    }
+    const queries = found?.queries ?? {};
+    if (!Object.keys(queries).length) {
+      this.log("queries_unresolved", { missing: found?.missing ?? [] });
+      return;
+    }
+    const stored: StoredQueries = { ...(this.state.queries ?? {}), ...queries, resolvedAt: this.at };
+    this.state = { ...this.state, queries: stored };
+    this.queries = mergeQueries(stored);
+    this.log("queries_resolved", { before, after: Object.fromEntries(Object.entries(this.queries).map(([key, query]) => [key, query.docId])), missing: found?.missing ?? [] });
   }
 
   /** finish settles the sources, the watched posts and the seen list. A
