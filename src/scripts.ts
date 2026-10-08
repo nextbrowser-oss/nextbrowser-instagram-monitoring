@@ -249,13 +249,22 @@ export function originScript(): string {
 })()`;
 }
 
-/** meScript reads who is signed in. */
+/** meScript reads who is signed in from the profile edit form's data, the
+ *  endpoint instagram.com's own settings page uses. accounts/current_user, read
+ *  before, now redirects a signed-in web session to the home page (HTML, HTTP
+ *  200), so a signed-in account read as "no account". The form carries no id;
+ *  the ds_user_id cookie, readable from the page, is the account's pk. */
 export function meScript(): string {
   return String.raw`(async () => {${REQUEST_HELPER}${READ_HELPER}
-  const got = await request("/api/v1/accounts/current_user/?edit=true");
+  const got = await request("/api/v1/accounts/edit/web_form_data/");
   const out = Object.assign({ signed_in: false, user: null }, got.meta);
-  const found = got.meta.ok && got.body && got.body.user ? user(got.body.user) : null;
-  if (found && found.username) { out.signed_in = true; out.user = found; }
+  const form = got.meta.ok && got.body && got.body.form_data && typeof got.body.form_data === "object" ? got.body.form_data : null;
+  const username = form ? str(form.username, 40) : "";
+  if (username) {
+    const pk = (document.cookie.match(/(?:^|;\s*)ds_user_id=(\d+)/) || [])[1] || "";
+    out.signed_in = true;
+    out.user = { pk: pk, username: username, full_name: [str(form.first_name, 80), str(form.last_name, 80)].filter(Boolean).join(" ").slice(0, 80) };
+  }
   return out;
 })()`;
 }

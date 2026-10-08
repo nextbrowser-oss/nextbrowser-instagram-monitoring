@@ -160,7 +160,7 @@ Piped to another program, the output switches to JSON lines, one event per line.
 flowchart LR
   App["Nextbrowser app<br/>(or instagram-monitor CLI)"] --> Pass["runPass"]
   Pass --> Browser["Signed-in profile<br/>(nbc / nextctl)"]
-  Browser --> Me["current_user<br/>who is signed in"]
+  Browser --> Me["edit/web_form_data<br/>who is signed in"]
   Browser --> Activity["news/inbox<br/>mentions · replies · comments"]
   Browser --> Profiles["web_profile_info<br/>your posts · watched profiles"]
   Browser --> Threads["media/…/comments<br/>only threads that grew"]

@@ -9,7 +9,7 @@ sequenceDiagram
   participant IG as instagram.com (profile tab)
   Host->>Pass: state
   Pass->>IG: open /robots.txt (the landing page)
-  Pass->>IG: GET accounts/current_user
+  Pass->>IG: GET accounts/edit/web_form_data
   IG-->>Pass: who is signed in
   Pass->>IG: GET users/web_profile_info (your profile)
   IG-->>Pass: followers, your 12 newest posts

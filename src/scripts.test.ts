@@ -63,6 +63,7 @@ function answer(response: Answer) {
 afterEach(() => {
   vi.unstubAllGlobals();
   document.cookie = "csrftoken=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  document.cookie = "ds_user_id=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 });
 
 describe("every script", () => {
@@ -88,10 +89,25 @@ describe("the request", () => {
   it("sends the web app's own headers and the session's CSRF token", async () => {
     page("https://www.instagram.com/robots.txt");
     document.cookie = "csrftoken=abc123";
-    const asked = answer({ body: { user: { pk: 100, username: "acme_shop", full_name: "Acme" }, status: "ok" } });
+    const asked = answer({ body: { form_data: { username: "acme_shop", first_name: "Acme" }, status: "ok" } });
     await run(meScript());
-    expect(asked[0]).toMatchObject({ path: "/api/v1/accounts/current_user/?edit=true", init: { credentials: "include" } });
+    expect(asked[0]).toMatchObject({ path: "/api/v1/accounts/edit/web_form_data/", init: { credentials: "include" } });
     expect(asked[0]!.init.headers).toMatchObject({ "x-ig-app-id": WEB_APP_ID, "x-requested-with": "XMLHttpRequest", "x-csrftoken": "abc123" });
+  });
+
+  it("reads the signed-in account from the edit form, and its pk from ds_user_id", async () => {
+    page("https://www.instagram.com/robots.txt");
+    document.cookie = "ds_user_id=26611528281";
+    answer({ body: { form_data: { username: "acme_shop", first_name: "Acme", last_name: "Shop", email: "x@example.com" }, status: "ok" } });
+    const me = await run<MeSnapshot>(meScript());
+    expect(me).toMatchObject({ ok: true, signed_in: true, user: { pk: "26611528281", username: "acme_shop", full_name: "Acme Shop" } });
+    expect(JSON.stringify(me)).not.toContain("example.com");
+  });
+
+  it("is not signed in when instagram.com answers with its home page", async () => {
+    page("https://www.instagram.com/robots.txt");
+    answer({ type: "text/html", body: "<!DOCTYPE html><html><head><title>Instagram</title></head><body></body></html>", url: "https://www.instagram.com/" });
+    expect(await run<MeSnapshot>(meScript())).toMatchObject({ signed_in: false, user: null, refused: "Instagram" });
   });
 
   it("knows a signed-out session, even when the message reads like a rate limit", async () => {

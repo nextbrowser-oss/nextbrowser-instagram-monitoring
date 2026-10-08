@@ -160,7 +160,7 @@ node dist/node/bin.js run --profile <your-profile> --profiles <competitor1>,<com
 flowchart LR
   App["Приложение Nextbrowser<br/>(или CLI instagram-monitor)"] --> Pass["runPass"]
   Pass --> Browser["Профиль с выполненным входом<br/>(nbc / nextctl)"]
-  Browser --> Me["current_user<br/>кто вошёл"]
+  Browser --> Me["edit/web_form_data<br/>кто вошёл"]
   Browser --> Activity["news/inbox<br/>упоминания · ответы · комментарии"]
   Browser --> Profiles["web_profile_info<br/>ваши посты · отслеживаемые профили"]
   Browser --> Threads["media/…/comments<br/>только выросшие ветки"]
