@@ -5,11 +5,15 @@
 // instagram.com's own: the web app's GraphQL-style profile, the API-style
 // comments, activity and tagged posts, and the failures it answers with —
 // a sign-in wall, a security check, a rate limit, a page instead of data.
-// None of these has been captured from a live session yet; they follow the
-// shapes the web app is known to receive, and a live run is still owed.
+// The identity, profile (GraphQL) and tagged (GraphQL) shapes follow answers
+// captured from a signed-in session on 2026-10-08; the comment and activity
+// shapes follow what the web app is known to receive.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  PROFILE_CONTENT_QUERY,
+  PROFILE_POSTS_QUERY,
+  PROFILE_TAGGED_QUERY,
   TEXT_MAX,
   WEB_APP_ID,
   activityScript,
@@ -49,6 +53,28 @@ function answer(response: Answer) {
   vi.stubGlobal("fetch", async (path: string, init: RequestInit) => {
     asked.push({ path, init });
     const { status = 200, type = "application/json; charset=utf-8", body, url = `https://www.instagram.com${path}` } = response;
+    return {
+      status,
+      ok: status >= 200 && status < 300,
+      url,
+      headers: { get: (name: string) => (name.toLowerCase() === "content-type" ? type : null) },
+      text: async () => (typeof body === "string" ? body : JSON.stringify(body)),
+    };
+  });
+  return asked;
+}
+
+/** The doc id a GraphQL request asked for, to route answers by query. */
+function docOf(init: RequestInit): string {
+  return new URLSearchParams(String(init?.body ?? "")).get("doc_id") ?? "";
+}
+
+/** answerBy answers each request by its path, for scripts that make several. */
+function answerBy(route: (path: string, init: RequestInit) => Answer) {
+  const asked: { path: string; init: RequestInit }[] = [];
+  vi.stubGlobal("fetch", async (path: string, init: RequestInit) => {
+    asked.push({ path, init });
+    const { status = 200, type = "application/json; charset=utf-8", body, url = `https://www.instagram.com${path}` } = route(path, init);
     return {
       status,
       ok: status >= 200 && status < 300,
@@ -150,22 +176,71 @@ describe("the request", () => {
 });
 
 describe("profileScript", () => {
-  it("reads the counts and the newest posts, keeping media ids whole", async () => {
+  const timeline = (nodes: string) => `{"data":{"xdt_api__v1__feed__user_timeline_graphql_connection":{"edges":[${nodes}],"page_info":{"has_next_page":true}},"xdt_viewer":{}},"extensions":{"is_final":true}}`;
+  const content = `{"data":{"user":{"pk":"9001","id":"9001","username":"rival_store","full_name":"Rival","is_private":false,
+    "follower_count":9000,"following_count":12,"media_count":340},"viewer":{}},"extensions":{"is_final":true}}`;
+
+  it("reads the posts by username, then the counts by the owner's pk, keeping media ids whole", async () => {
     page("https://www.instagram.com/robots.txt");
     // Sent as text: 3254998171211465227 is past what a Number holds exactly.
-    answer({
-      body: `{"data":{"user":{"id":"9001","username":"rival_store","full_name":"Rival","is_private":false,
-        "edge_followed_by":{"count":9000},"edge_follow":{"count":12},
-        "edge_owner_to_timeline_media":{"count":340,"edges":[{"node":{"id":"3254998171211465227","shortcode":"C0dEx1","taken_at_timestamp":1790935200,
-          "edge_media_to_caption":{"edges":[{"node":{"text":"Our summer sale"}}]},"edge_media_to_comment":{"count":42},"edge_liked_by":{"count":800},
-          "is_video":false,"pinned_for_users":[{"id":"9001"}]}}]}}},"status":"ok"}`,
-    });
+    const asked = answerBy((_path, init) => docOf(init) === PROFILE_POSTS_QUERY.docId
+      ? { body: timeline(`{"node":{"pk":"3254998171211465227","id":"3254998171211465227_9001","code":"C0dEx1","taken_at":1790935200,
+          "caption":{"text":"Our summer sale"},"comment_count":42,"like_count":800,"media_type":1,
+          "user":{"pk":"9001","id":"9001","username":"rival_store"},"timeline_pinned_user_ids":["9001"]}}`) }
+      : { body: content });
     const snapshot = await run<ProfileSnapshot>(profileScript("rival_store"));
-    expect(snapshot).toMatchObject({ found: true, private: false, followers: 9000, following: 12, posts_count: 340, user: { pk: "9001", username: "rival_store" } });
+    expect(snapshot).toMatchObject({ ok: true, found: true, private: false, followers: 9000, following: 12, posts_count: 340, user: { pk: "9001", username: "rival_store" } });
     expect(snapshot.posts[0]).toEqual({
       pk: "3254998171211465227", shortcode: "C0dEx1", taken_at: 1790935200, caption: "Our summer sale",
       comments: 42, likes: 800, video: false, pinned: true, owner: "rival_store",
     });
+    expect(asked.map((a) => a.path)).toEqual(["/graphql/query", "/graphql/query"]);
+    expect(asked.map((a) => docOf(a.init))).toEqual([PROFILE_POSTS_QUERY.docId, PROFILE_CONTENT_QUERY.docId]);
+    const posts = new URLSearchParams(String(asked[0]!.init.body));
+    expect(asked[0]!.init.method).toBe("POST");
+    expect(posts.get("doc_id")).toBe(PROFILE_POSTS_QUERY.docId);
+    expect(JSON.parse(posts.get("variables")!)).toMatchObject({ username: "rival_store", data: { count: 12 } });
+    expect(asked[0]!.init.headers).toMatchObject({ "x-ig-app-id": WEB_APP_ID, "content-type": "application/x-www-form-urlencoded" });
+    expect(asked[0]!.init.headers).not.toHaveProperty("x-fb-friendly-name");
+    expect(asked[0]!.init.headers).not.toHaveProperty("x-asbd-id");
+    expect(JSON.parse(new URLSearchParams(String(asked[1]!.init.body)).get("variables")!)).toMatchObject({ id: "9001" });
+  });
+
+  it("finds the pk of a profile without posts by search", async () => {
+    page("https://www.instagram.com/robots.txt");
+    const asked = answerBy((path, init) => docOf(init) === PROFILE_POSTS_QUERY.docId
+      ? { body: timeline("") }
+      : path.startsWith("/web/search/topsearch/")
+        ? { body: { users: [{ user: { pk: "8000", username: "rival_store_fans" } }, { user: { pk: "9001", username: "Rival_Store" } }], status: "ok" } }
+        : { body: content.replace('"is_private":false', '"is_private":true') });
+    const snapshot = await run<ProfileSnapshot>(profileScript("rival_store"));
+    expect(snapshot).toMatchObject({ found: true, private: true, followers: 9000, posts: [] });
+    expect(asked[1]!.path).toBe("/web/search/topsearch/?context=blended&include_reel=false&query=rival_store");
+    expect(JSON.parse(new URLSearchParams(String(asked[2]!.init.body)).get("variables")!)).toMatchObject({ id: "9001" });
+  });
+
+  it("finds no profile when the posts query fails and search has no such name", async () => {
+    page("https://www.instagram.com/robots.txt");
+    answerBy((_path, init) => docOf(init) === PROFILE_POSTS_QUERY.docId
+      ? { body: `{"errors":[{"message":"execution error","severity":"CRITICAL"}],"data":{"xdt_api__v1__feed__user_timeline_graphql_connection":null}}` }
+      : { body: { users: [], status: "ok" } });
+    expect(await run<ProfileSnapshot>(profileScript("nobody_here"))).toMatchObject({ ok: true, found: false, posts: [] });
+  });
+
+  it("finds no profile when the posts query answers only errors and search has no such name", async () => {
+    page("https://www.instagram.com/robots.txt");
+    answerBy((_path, init) => docOf(init) === PROFILE_POSTS_QUERY.docId
+      ? { body: `{"errors":[{"message":"A server error field_exception occured.","code":1357005}],"extensions":{"is_final":true}}` }
+      : { body: { users: [], status: "ok" } });
+    expect(await run<ProfileSnapshot>(profileScript("nobody_here"))).toMatchObject({ ok: true, found: false, posts: [] });
+  });
+
+  it("reports a broken query when search finds the profile but the counts query fails too", async () => {
+    page("https://www.instagram.com/robots.txt");
+    answerBy((path) => path.startsWith("/web/search/topsearch/")
+      ? { body: { users: [{ user: { pk: "9001", username: "rival_store" } }], status: "ok" } }
+      : { body: { errors: [{ message: "Query not found", severity: "CRITICAL" }], data: null } });
+    expect(await run<ProfileSnapshot>(profileScript("rival_store"))).toMatchObject({ ok: false, found: false, reason: "Query not found" });
   });
 
   it("finds no profile in a 404", async () => {
@@ -214,12 +289,16 @@ describe("activityScript", () => {
 describe("tagsScript", () => {
   it("reads the posts the account is tagged in", async () => {
     page("https://www.instagram.com/robots.txt");
-    answer({
-      body: `{"items":[{"pk":3254998171211400001,"id":"3254998171211400001_77","code":"Tg1","taken_at":1790935000,"caption":{"text":"Unboxing"},
-        "comment_count":2,"like_count":10,"media_type":2,"user":{"username":"blogger"}}],"status":"ok"}`,
+    const asked = answer({
+      body: `{"data":{"xdt_api__v1__usertags__user_id__feed_connection":{"edges":[{"node":{"pk":"3254998171211400001","id":"3254998171211400001_77","code":"Tg1","taken_at":1790935000,"caption":{"text":"Unboxing"},
+        "comment_count":2,"like_count":10,"media_type":2,"user":{"pk":"77","username":"blogger"}}}]}},"extensions":{"is_final":true}}`,
     });
     expect((await run<TagsSnapshot>(tagsScript("100"))).posts).toEqual([
       { pk: "3254998171211400001", shortcode: "Tg1", taken_at: 1790935000, caption: "Unboxing", comments: 2, likes: 10, video: true, pinned: false, owner: "blogger" },
     ]);
+    const body = new URLSearchParams(String(asked[0]!.init.body));
+    expect(asked[0]!.path).toBe(PROFILE_TAGGED_QUERY.path);
+    expect(body.get("doc_id")).toBe(PROFILE_TAGGED_QUERY.docId);
+    expect(JSON.parse(body.get("variables")!)).toMatchObject({ user_id: "100", count: 12 });
   });
 });

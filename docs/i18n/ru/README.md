@@ -162,7 +162,7 @@ flowchart LR
   Pass --> Browser["Профиль с выполненным входом<br/>(nbc / nextctl)"]
   Browser --> Me["edit/web_form_data<br/>кто вошёл"]
   Browser --> Activity["news/inbox<br/>упоминания · ответы · комментарии"]
-  Browser --> Profiles["web_profile_info<br/>ваши посты · отслеживаемые профили"]
+  Browser --> Profiles["GraphQL-запросы профиля<br/>ваши посты · отслеживаемые профили"]
   Browser --> Threads["media/…/comments<br/>только выросшие ветки"]
   Me --> Pass
   Activity --> Pass

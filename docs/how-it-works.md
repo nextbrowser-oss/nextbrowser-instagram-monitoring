@@ -11,16 +11,16 @@ sequenceDiagram
   Pass->>IG: open /robots.txt (the landing page)
   Pass->>IG: GET accounts/edit/web_form_data
   IG-->>Pass: who is signed in
-  Pass->>IG: GET users/web_profile_info (your profile)
+  Pass->>IG: POST graphql/query PolarisProfilePostsQuery + PageContentQuery (your profile)
   IG-->>Pass: followers, your 12 newest posts
   Pass->>IG: GET news/inbox
   IG-->>Pass: mentions, replies, comments
   loop each of your posts whose comment count grew
     Pass->>IG: GET media/{id}/comments
   end
-  Pass->>IG: GET usertags/{you}/feed
+  Pass->>IG: POST graphql/query PolarisProfileTaggedTabContentQuery
   loop each watched profile
-    Pass->>IG: GET users/web_profile_info
+    Pass->>IG: POST graphql/query PolarisProfilePostsQuery + PageContentQuery
     loop each of its posts whose comment count grew (with keywords)
       Pass->>IG: GET media/{id}/comments
     end
@@ -45,8 +45,8 @@ Between two requests the pass waits 1.5 to 4 seconds. Instagram restricts accoun
 | --- | --- | --- | --- |
 | Activity | `activity` | `news/inbox` | Entries with something to answer: a comment on your post, a comment or caption that mentions `@you`, a reply. Likes and follows are left out. |
 | Comments on your posts | `comments:own` | `media/{id}/comments` for your newest `ownPosts` posts | Every new comment, except your own. |
-| Tags | `tags` | `usertags/{you}/feed` | Every new post you are tagged in. |
-| A watched profile's posts | `profile:<handle>:posts` | `users/web_profile_info` | Every new post. |
+| Tags | `tags` | GraphQL `PolarisProfileTaggedTabContentQuery` | Every new post you are tagged in. |
+| A watched profile's posts | `profile:<handle>:posts` | GraphQL `PolarisProfilePostsQuery` | Every new post. |
 | Comments under a watched profile's posts | `profile:<handle>:comments` | `media/{id}/comments` for its newest `postsPerProfile` posts | Only comments that name a keyword. Read only when keywords are set. |
 
 An item found by more than one source is reported once, by the first. A comment's key is `comment:<id>` wherever it was found, so a mention read in the activity feed and the same comment read under its post are one item.

@@ -1,6 +1,6 @@
 {
   "name": "@nextbrowser-oss/instagram-monitoring",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "description": "The open-source Instagram monitoring engine for Nextbrowser: comments on your posts, mentions and tags, and new content from watched and competitor profiles, ranked by urgency, read from a signed-in browser profile.",
   "keywords": [
